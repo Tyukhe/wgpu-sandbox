@@ -1,3 +1,8 @@
+use wgpu_project::run;
+
 fn main() {
-    println!("Hello, world!");
+    env_logger::init();
+    if let Err(e) = run() {
+        log::error!("{}", e);
+    }
 }
