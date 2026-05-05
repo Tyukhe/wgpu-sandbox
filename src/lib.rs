@@ -3,6 +3,7 @@ mod core;
 mod gpu;
 mod mesh;
 mod render;
+mod scene;
 mod texture;
 
 use std::sync::Arc;
@@ -10,7 +11,8 @@ use winit::{
     application::ApplicationHandler,
     event::*,
     event_loop::{ActiveEventLoop, EventLoop},
-    window::{CursorGrabMode, Window},
+    keyboard::PhysicalKey,
+    window::{CursorGrabMode, Fullscreen, Window},
 };
 
 struct App {
@@ -28,7 +30,7 @@ impl ApplicationHandler<()> for App {
         #[allow(unused_mut)]
         let mut window_attributes = Window::default_attributes()
             .with_title("wgpu_project")
-            .with_inner_size(winit::dpi::LogicalSize::new(800.0f32, 800.0f32));
+            .with_fullscreen(Some(Fullscreen::Borderless(None)));
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         let _ = window.set_cursor_grab(CursorGrabMode::Confined);
@@ -44,6 +46,23 @@ impl ApplicationHandler<()> for App {
             None => return,
         };
         state.window.request_redraw();
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        let state = match &mut self.state {
+            Some(canvas) => canvas,
+            None => return,
+        };
+
+        match event {
+            DeviceEvent::MouseMotion { delta } => state.handle_mouse_delta(delta.0, delta.1),
+            _ => {}
+        }
     }
 
     fn window_event(
@@ -71,6 +90,15 @@ impl ApplicationHandler<()> for App {
                     log::error!("{}", e);
                 }
             },
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(code),
+                        state: key_state,
+                        ..
+                    },
+                ..
+            } => state.handle_key(event_loop, code, key_state.is_pressed()),
             _ => {}
         }
     }
