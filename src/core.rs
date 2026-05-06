@@ -1,6 +1,6 @@
 use crate::camera::Camera;
 use crate::gpu::Gpu;
-use crate::mesh::{Mesh, Vertex};
+use crate::mesh::{Mesh, Surface, Vertex};
 use crate::render::Render;
 use crate::scene::Scene;
 use std::sync::Arc;
@@ -73,14 +73,19 @@ impl State {
             0, 1, 2, 1, 3, 2, 5, 4, 7, 4, 6, 7, 1, 5, 3, 5, 7, 3, 4, 0, 6, 0, 2, 6, 4, 5, 0, 5, 1,
             0, 2, 3, 6, 3, 7, 6,
         ];
-        let cube1 = scene.add_object(Mesh::new_manually(verts.clone(), inds.clone(), true));
-        verts[0].color = [0.0, 0.0, 1.0];
+        let cube1 = scene.add_object(Mesh::new_manually(
+            verts.clone(),
+            inds.clone(),
+            Surface::Textured(0),
+            true,
+        ));
+        verts[0].color = [0.0, 1.0, 1.0];
         verts[1].color = [0.0, 0.0, 1.0];
         verts[2].color = [0.0, 0.0, 1.0];
         verts[3].color = [0.0, 0.0, 1.0];
         verts[4].color = [0.0, 0.0, 1.0];
         verts[5].color = [0.0, 0.0, 1.0];
-        let cube2 = scene.add_object(Mesh::new_manually(verts, inds, true));
+        let cube2 = scene.add_object(Mesh::new_manually(verts, inds, Surface::Textured(0), true));
         if let Some(mesh) = scene.get_object(cube2) {
             mesh.set_position(glam::vec3(5.0, 1.0, 2.0));
         }
@@ -90,6 +95,7 @@ impl State {
             &gpu,
             &scene.camera_bind_group_layout,
             &scene.transform_bind_group_layout,
+            &scene.diffuse_bind_group_layout,
         ))
         .unwrap();
 
@@ -182,9 +188,10 @@ impl State {
             if let (Some(v_buf), Some(i_buf)) =
                 (&self.scene.vertex_buffer, &self.scene.index_buffer)
             {
-                render_pass.set_pipeline(&self.render.render_pipeline_colored);
+                render_pass.set_pipeline(&self.render.render_pipeline_textured);
                 render_pass.set_bind_group(0, &self.scene.camera_bind_group, &[]);
                 render_pass.set_bind_group(1, &self.scene.transform_bind_group, &[]);
+                render_pass.set_bind_group(2, &self.scene.diffuse_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, v_buf.slice(..));
                 render_pass.set_index_buffer(i_buf.slice(..), wgpu::IndexFormat::Uint32);
                 for model in &self.scene.models {

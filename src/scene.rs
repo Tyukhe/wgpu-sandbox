@@ -1,6 +1,7 @@
 use crate::camera::{Camera, CameraController, CameraUniform};
 use crate::gpu::Gpu;
-use crate::mesh::{Mesh, Vertex};
+use crate::mesh::{Mesh, Surface, Vertex};
+use crate::texture;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -24,7 +25,10 @@ impl InstanceData {
     pub fn build_from_mesh(mesh: &Mesh) -> Self {
         Self {
             transform: mesh.build_model_matrix(),
-            texture: mesh.texture_id.unwrap_or_default(),
+            texture: match mesh.surface {
+                Surface::Colored => 0,
+                Surface::Textured(id) => id,
+            },
             ..Default::default()
         }
     }
@@ -50,7 +54,9 @@ pub struct Scene {
     pub vertex_buffer: Option<wgpu::Buffer>,
     pub index_buffer: Option<wgpu::Buffer>,
     pub models: Vec<ModelInfo>,
-    textures: (),
+    pub diffuse_bind_group_layout: wgpu::BindGroupLayout,
+    pub diffuse_bind_group: wgpu::BindGroup,
+    pub diffuse_texture: texture::Texture,
 }
 
 impl Scene {
@@ -126,6 +132,50 @@ impl Scene {
             label: Some("Transform Bind Group"),
         });
 
+        let diffuse_bytes = include_bytes!("../assets/textures/default.png");
+        let diffuse_texture =
+            texture::Texture::from_bytes(&gpu.device, &gpu.queue, diffuse_bytes, "Default Image")
+                .unwrap();
+
+        let diffuse_bind_group_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                multisampled: false,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                    label: Some("texture_bind_group_layout"),
+                });
+
+        let diffuse_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &diffuse_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                },
+            ],
+            label: Some("diffuse_bind_group"),
+        });
+
         let models = Vec::<ModelInfo>::new();
 
         Self {
@@ -141,8 +191,10 @@ impl Scene {
             transform_bind_group,
             vertex_buffer: None,
             index_buffer: None,
+            diffuse_bind_group_layout,
+            diffuse_bind_group,
+            diffuse_texture,
             models,
-            textures: (),
         }
     }
 

@@ -32,10 +32,15 @@ impl Vertex {
     }
 }
 
+pub enum Surface {
+    Colored,
+    Textured(u32),
+}
+
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
-    pub texture_id: Option<u32>,
+    pub surface: Surface,
     pub position: glam::Vec3,
     pub rotation: glam::Quat,
     pub scale: f32,
@@ -43,11 +48,16 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new_manually(verts: Vec<Vertex>, inds: Vec<u32>, visible: bool) -> Self {
+    pub fn new_manually(
+        verts: Vec<Vertex>,
+        inds: Vec<u32>,
+        surface: Surface,
+        visible: bool,
+    ) -> Self {
         Self {
             vertices: verts,
             indices: inds,
-            texture_id: None,
+            surface,
             position: glam::Vec3::ZERO,
             rotation: glam::Quat::IDENTITY,
             scale: 1.0,
@@ -56,7 +66,7 @@ impl Mesh {
     }
 
     pub fn set_texture(&mut self, texture_id: u32) {
-        self.texture_id = Some(texture_id);
+        self.surface = Surface::Textured(texture_id);
     }
 
     pub fn set_position(&mut self, position: glam::Vec3) {
