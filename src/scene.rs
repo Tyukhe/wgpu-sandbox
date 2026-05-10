@@ -2,6 +2,7 @@ use crate::camera::{Camera, CameraController, CameraUniform};
 use crate::gpu::Gpu;
 use crate::mesh::{Mesh, Surface, Vertex};
 use crate::texture;
+use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -22,19 +23,18 @@ impl InstanceData {
         }
     }
 
-    pub fn build_from_mesh(mesh: &Mesh) -> Self {
+    pub fn build_from_mesh(mesh: &Mesh, actual_texture: u32) -> Self {
         Self {
             transform: mesh.build_model_matrix(),
-            texture: match mesh.surface {
-                Surface::Colored => 0,
-                Surface::Textured(id) => id,
-            },
+            texture: actual_texture,
             ..Default::default()
         }
     }
 }
 
 pub struct ModelInfo {
+    mesh_index: usize,
+    texture_index: u32,
     pub index_range: std::ops::Range<u32>,
     pub base_vertex: usize,
     pub index_transform: u32,
@@ -42,6 +42,10 @@ pub struct ModelInfo {
 
 pub struct Scene {
     meshes: Vec<Option<Mesh>>,
+    textures: Vec<Option<texture::Texture>>,
+    pub models_colored_drawing: Vec<ModelInfo>,
+    pub models_textured_drawing: Vec<ModelInfo>,
+    default_texture: texture::Texture,
     pub camera: Camera,
     pub camera_controller: CameraController,
     camera_uniform: CameraUniform,
@@ -51,12 +55,12 @@ pub struct Scene {
     transform_buffer: wgpu::Buffer,
     pub transform_bind_group_layout: wgpu::BindGroupLayout,
     pub transform_bind_group: wgpu::BindGroup,
-    pub vertex_buffer: Option<wgpu::Buffer>,
-    pub index_buffer: Option<wgpu::Buffer>,
-    pub models: Vec<ModelInfo>,
-    pub diffuse_bind_group_layout: wgpu::BindGroupLayout,
-    pub diffuse_bind_group: wgpu::BindGroup,
-    pub diffuse_texture: texture::Texture,
+    pub vertex_colored_buffer: Option<wgpu::Buffer>,
+    pub index_colored_buffer: Option<wgpu::Buffer>,
+    pub vertex_textured_buffer: Option<wgpu::Buffer>,
+    pub index_textured_buffer: Option<wgpu::Buffer>,
+    pub textures_bind_group_layout: wgpu::BindGroupLayout,
+    pub textures_bind_group: wgpu::BindGroup,
 }
 
 impl Scene {
@@ -112,7 +116,7 @@ impl Scene {
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -132,12 +136,21 @@ impl Scene {
             label: Some("Transform Bind Group"),
         });
 
-        let diffuse_bytes = include_bytes!("../assets/textures/default.png");
-        let diffuse_texture =
-            texture::Texture::from_bytes(&gpu.device, &gpu.queue, diffuse_bytes, "Default Image")
-                .unwrap();
+        let models_colored_drawing = Vec::<ModelInfo>::new();
+        let models_textured_drawing = Vec::<ModelInfo>::new();
 
-        let diffuse_bind_group_layout =
+        let default_texture_bytes = include_bytes!("../assets/textures/default.png");
+        let default_texture = texture::Texture::from_bytes(
+            &gpu.device,
+            &gpu.queue,
+            default_texture_bytes,
+            "Default Texture",
+        )
+        .unwrap();
+        let views: Vec<&wgpu::TextureView> = vec![&default_texture.view; 1024];
+        let textures = Vec::<Option<texture::Texture>>::with_capacity(1024);
+
+        let textures_bind_group_layout =
             gpu.device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     entries: &[
@@ -145,11 +158,11 @@ impl Scene {
                             binding: 0,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Texture {
-                                multisampled: false,
-                                view_dimension: wgpu::TextureViewDimension::D2,
                                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
                             },
-                            count: None,
+                            count: std::num::NonZeroU32::new(1024),
                         },
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
@@ -158,28 +171,30 @@ impl Scene {
                             count: None,
                         },
                     ],
-                    label: Some("texture_bind_group_layout"),
+                    label: Some("Texture Bind Group Layout"),
                 });
 
-        let diffuse_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &diffuse_bind_group_layout,
+        let textures_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &textures_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                    resource: wgpu::BindingResource::TextureViewArray(&views),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                    resource: wgpu::BindingResource::Sampler(&default_texture.sampler),
                 },
             ],
-            label: Some("diffuse_bind_group"),
+            label: Some("Diffuse Bind Group"),
         });
-
-        let models = Vec::<ModelInfo>::new();
 
         Self {
             meshes: Vec::<Option<Mesh>>::new(),
+            textures,
+            models_colored_drawing,
+            models_textured_drawing,
+            default_texture,
             camera,
             camera_controller,
             camera_uniform,
@@ -189,18 +204,23 @@ impl Scene {
             transform_buffer,
             transform_bind_group_layout,
             transform_bind_group,
-            vertex_buffer: None,
-            index_buffer: None,
-            diffuse_bind_group_layout,
-            diffuse_bind_group,
-            diffuse_texture,
-            models,
+            vertex_colored_buffer: None,
+            index_colored_buffer: None,
+            vertex_textured_buffer: None,
+            index_textured_buffer: None,
+            textures_bind_group_layout,
+            textures_bind_group,
         }
     }
 
     pub fn add_object(&mut self, mesh: Mesh) -> usize {
         self.meshes.push(Some(mesh));
         self.meshes.len() - 1
+    }
+
+    pub fn add_texture(&mut self, texture: texture::Texture) -> usize {
+        self.textures.push(Some(texture));
+        self.textures.len() - 1
     }
 
     pub fn remove_object(&mut self, id: usize) {
@@ -210,11 +230,25 @@ impl Scene {
         self.meshes[id] = None;
     }
 
+    pub fn remove_texture(&mut self, id: usize) {
+        if id >= self.textures.len() {
+            return;
+        };
+        self.textures[id] = None;
+    }
+
     pub fn change_object(&mut self, id: usize, mesh: Mesh) {
         if id >= self.meshes.len() {
             return;
         };
         self.meshes[id] = Some(mesh);
+    }
+
+    pub fn change_texture(&mut self, id: usize, texture: texture::Texture) {
+        if id >= self.textures.len() {
+            return;
+        };
+        self.textures[id] = Some(texture);
     }
 
     pub fn set_object_visibilty(&mut self, id: usize, visible: bool) {
@@ -243,8 +277,19 @@ impl Scene {
     pub fn build_transform_buffers(&mut self, gpu: &Gpu) {
         let trans_count: usize = self.meshes.iter().flatten().count();
         let mut trans: Vec<InstanceData> = Vec::with_capacity(trans_count);
-        for mesh in self.meshes.iter().flatten() {
-            trans.push(InstanceData::build_from_mesh(mesh));
+        for model in &self.models_textured_drawing {
+            if let Some(Some(cur_mesh)) = self.meshes.get(model.mesh_index) {
+                trans.push(InstanceData::build_from_mesh(cur_mesh, model.texture_index));
+            } else {
+                log::warn!("Lost model");
+            }
+        }
+        for model in &self.models_colored_drawing {
+            if let Some(Some(cur_mesh)) = self.meshes.get(model.mesh_index) {
+                trans.push(InstanceData::build_from_mesh(cur_mesh, model.texture_index));
+            } else {
+                log::warn!("Lost model");
+            }
         }
         self.transform_buffer = gpu
             .device
@@ -265,50 +310,203 @@ impl Scene {
     }
 
     pub fn build_models_buffers(&mut self, gpu: &Gpu) {
-        self.models.clear();
-        let verts_count: usize = self
+        self.models_colored_drawing.clear();
+        self.models_textured_drawing.clear();
+        let mut textures_id_to_draw_id = HashMap::<u32, u32>::new();
+        let mut views: Vec<&wgpu::TextureView> = vec![&self.default_texture.view; 1024];
+        let mut last_texture_id: u32 = 1;
+        let verts_textured_count: usize = self
             .meshes
             .iter()
             .flatten()
-            .map(|mesh| mesh.vertices.len())
+            .map(|mesh| {
+                if matches!(mesh.surface, Surface::Textured(_)) {
+                    mesh.vertices.len()
+                } else {
+                    0
+                }
+            })
             .sum();
-        let mut verts: Vec<Vertex> = Vec::with_capacity(verts_count);
-        let inds_count: usize = self
+        let mut verts_textured: Vec<Vertex> = Vec::with_capacity(verts_textured_count);
+        let inds_textured_count: usize = self
             .meshes
             .iter()
             .flatten()
-            .map(|mesh| mesh.indices.len())
+            .map(|mesh| {
+                if matches!(mesh.surface, Surface::Textured(_)) {
+                    mesh.indices.len()
+                } else {
+                    0
+                }
+            })
             .sum();
-        let mut inds: Vec<u32> = Vec::with_capacity(inds_count);
-        let trans_count: usize = self.meshes.iter().flatten().count();
-        let mut trans: Vec<InstanceData> = Vec::with_capacity(trans_count);
-        for mesh in self.meshes.iter().flatten() {
-            let model = ModelInfo {
-                index_range: (inds.len() as u32)..((inds.len() + mesh.indices.len()) as u32),
-                base_vertex: verts.len(),
-                index_transform: trans.len() as u32,
-            };
-            verts.extend_from_slice(&mesh.vertices);
-            inds.extend_from_slice(&mesh.indices);
-            trans.push(InstanceData::build_from_mesh(mesh));
-            self.models.push(model);
+        let mut inds_textured: Vec<u32> = Vec::with_capacity(inds_textured_count);
+        let verts_colored_count: usize = self
+            .meshes
+            .iter()
+            .flatten()
+            .map(|mesh| {
+                if matches!(mesh.surface, Surface::Colored) {
+                    mesh.vertices.len()
+                } else {
+                    0
+                }
+            })
+            .sum();
+        let mut verts_colored: Vec<Vertex> = Vec::with_capacity(verts_colored_count);
+        let inds_colored_count: usize = self
+            .meshes
+            .iter()
+            .flatten()
+            .map(|mesh| {
+                if matches!(mesh.surface, Surface::Colored) {
+                    mesh.indices.len()
+                } else {
+                    0
+                }
+            })
+            .sum();
+        let mut inds_colored: Vec<u32> = Vec::with_capacity(inds_colored_count);
+        let trans_textured_count: usize = self
+            .meshes
+            .iter()
+            .flatten()
+            .map(|mesh| {
+                if matches!(mesh.surface, Surface::Textured(_)) {
+                    mesh.indices.len()
+                } else {
+                    0
+                }
+            })
+            .count();
+        let mut trans_textured: Vec<InstanceData> = Vec::with_capacity(trans_textured_count);
+        let trans_colored_count: usize = self
+            .meshes
+            .iter()
+            .flatten()
+            .map(|mesh| {
+                if matches!(mesh.surface, Surface::Colored) {
+                    mesh.indices.len()
+                } else {
+                    0
+                }
+            })
+            .count();
+        let mut trans_colored: Vec<InstanceData> = Vec::with_capacity(trans_colored_count);
+
+        for (index, omesh) in self.meshes.iter().enumerate() {
+            if let Some(mesh) = omesh {
+                if let Surface::Textured(id) = mesh.surface {
+                    let mut actual_texture: u32 = 0;
+                    if let Some(actual_id) = textures_id_to_draw_id.get(&id).cloned() {
+                        actual_texture = actual_id;
+                    } else {
+                        if let Some(Some(existing_texture)) = &self.textures.get(id as usize) {
+                            textures_id_to_draw_id.insert(id, last_texture_id);
+                            views[last_texture_id as usize] = &existing_texture.view;
+                            if last_texture_id >= 1024 {
+                                panic!("You can't render more than 1024 textures at a time");
+                            }
+                            actual_texture = last_texture_id;
+                            last_texture_id += 1;
+                        }
+                    }
+                    let model = ModelInfo {
+                        mesh_index: index,
+                        texture_index: actual_texture,
+                        index_range: (inds_textured.len() as u32)
+                            ..((inds_textured.len() + mesh.indices.len()) as u32),
+                        base_vertex: verts_textured.len(),
+                        index_transform: trans_textured.len() as u32,
+                    };
+                    verts_textured.extend_from_slice(&mesh.vertices);
+                    inds_textured.extend_from_slice(&mesh.indices);
+                    trans_textured.push(InstanceData::build_from_mesh(mesh, actual_texture));
+                    self.models_textured_drawing.push(model);
+                } else {
+                    let model = ModelInfo {
+                        mesh_index: index,
+                        texture_index: 0,
+                        index_range: (inds_colored.len() as u32)
+                            ..((inds_colored.len() + mesh.indices.len()) as u32),
+                        base_vertex: verts_colored.len(),
+                        index_transform: trans_colored.len() as u32,
+                    };
+                    verts_colored.extend_from_slice(&mesh.vertices);
+                    inds_colored.extend_from_slice(&mesh.indices);
+                    trans_colored.push(InstanceData::build_from_mesh(mesh, 0));
+                    self.models_colored_drawing.push(model);
+                }
+            }
         }
+        let offset = trans_textured.len() as u32;
+        self.models_colored_drawing
+            .iter_mut()
+            .for_each(|x| x.index_transform += offset);
+        let trans: Vec<InstanceData> = trans_textured.into_iter().chain(trans_colored).collect();
 
-        self.vertex_buffer = Some(gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&verts),
-                usage: wgpu::BufferUsages::VERTEX,
-            },
-        ));
+        self.vertex_textured_buffer = match verts_textured.is_empty() {
+            true => None,
+            false => Some(
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Vertex Buffer"),
+                        contents: bytemuck::cast_slice(&verts_textured),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }),
+            ),
+        };
 
-        self.index_buffer = Some(gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(&inds),
-                usage: wgpu::BufferUsages::INDEX,
-            },
-        ));
+        self.index_textured_buffer = match inds_textured.is_empty() {
+            true => None,
+            false => Some(
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Index Buffer"),
+                        contents: bytemuck::cast_slice(&inds_textured),
+                        usage: wgpu::BufferUsages::INDEX,
+                    }),
+            ),
+        };
+
+        self.textures_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.textures_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&views),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.default_texture.sampler),
+                },
+            ],
+            label: Some("Diffuse Bind Group"),
+        });
+
+        self.vertex_colored_buffer = match verts_colored.is_empty() {
+            true => None,
+            false => Some(
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Vertex Buffer"),
+                        contents: bytemuck::cast_slice(&verts_colored),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }),
+            ),
+        };
+
+        self.index_colored_buffer = match inds_colored.is_empty() {
+            true => None,
+            false => Some(
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Index Buffer"),
+                        contents: bytemuck::cast_slice(&inds_colored),
+                        usage: wgpu::BufferUsages::INDEX,
+                    }),
+            ),
+        };
 
         self.transform_buffer = gpu
             .device
@@ -326,5 +524,6 @@ impl Scene {
             }],
             label: Some("Transform Bind Group"),
         });
+        log::info!("Buffers are built");
     }
 }

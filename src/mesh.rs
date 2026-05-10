@@ -89,7 +89,7 @@ impl Mesh {
         self.rotation.clone()
     }
 
-    pub fn turn(&mut self, offset: glam::Quat) {
+    pub fn rotate(&mut self, offset: glam::Quat) {
         self.rotation *= offset;
     }
 

@@ -1,5 +1,6 @@
 use crate::gpu::Gpu;
 use crate::mesh::Vertex;
+use crate::texture;
 
 pub struct Render {
     pub render_pipeline_colored: wgpu::RenderPipeline,
@@ -58,7 +59,13 @@ impl Render {
                         unclipped_depth: false,
                         conservative: false,
                     },
-                    depth_stencil: None,
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: texture::Texture::DEPTH_FORMAT,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Greater,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
                     multisample: wgpu::MultisampleState {
                         count: 1,
                         mask: !0,
@@ -116,7 +123,13 @@ impl Render {
                         unclipped_depth: false,
                         conservative: false,
                     },
-                    depth_stencil: None,
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: texture::Texture::DEPTH_FORMAT,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Greater,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
                     multisample: wgpu::MultisampleState {
                         count: 1,
                         mask: !0,
