@@ -4,7 +4,7 @@ use crate::mesh::{Mesh, Surface, Vertex};
 use crate::render::Render;
 use crate::scene::Scene;
 use crate::texture;
-use rand::RngExt;
+use std::f32::consts::PI;
 use std::sync::Arc;
 use winit::{event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 
@@ -13,9 +13,7 @@ pub struct State {
     render: Render,
     depth_texture: texture::Texture,
     scene: Scene,
-    cube1: usize,
-    cube2: usize,
-    cube3: usize,
+    dog: usize,
     pub window: Arc<Window>,
 }
 
@@ -31,135 +29,18 @@ impl State {
             znear: 0.1,
         };
         let mut scene = Scene::new(&gpu, camera);
-        let mut verts = vec![
-            Vertex {
-                position: [1.0, 1.0, 1.0],
-                color: [1.0, 0.0, 0.0],
-                tex_coords: [1.0, 0.0],
-            },
-            Vertex {
-                position: [-1.0, 1.0, 1.0],
-                color: [1.0, 0.0, 0.0],
-                tex_coords: [0.0, 0.0],
-            },
-            Vertex {
-                position: [1.0, -1.0, 1.0],
-                color: [1.0, 0.0, 0.0],
-                tex_coords: [1.0, 1.0],
-            },
-            Vertex {
-                position: [-1.0, -1.0, 1.0],
-                color: [1.0, 0.0, 0.0],
-                tex_coords: [0.0, 1.0],
-            },
-            Vertex {
-                position: [1.0, 1.0, -1.0],
-                color: [1.0, 0.0, 0.0],
-                tex_coords: [0.0, 0.0],
-            },
-            Vertex {
-                position: [-1.0, 1.0, -1.0],
-                color: [1.0, 0.0, 0.0],
-                tex_coords: [1.0, 0.0],
-            },
-            Vertex {
-                position: [1.0, -1.0, -1.0],
-                color: [1.0, 0.0, 0.0],
-                tex_coords: [0.0, 1.0],
-            },
-            Vertex {
-                position: [-1.0, -1.0, -1.0],
-                color: [1.0, 0.0, 0.0],
-                tex_coords: [1.0, 1.0],
-            },
-        ];
-        let inds: Vec<u32> = vec![
-            0, 1, 2, 1, 3, 2, 5, 4, 7, 4, 6, 7, 1, 5, 3, 5, 7, 3, 4, 0, 6, 0, 2, 6, 4, 5, 0, 5, 1,
-            0, 2, 3, 6, 3, 7, 6,
-        ];
-        let texture_bytes_gman = include_bytes!("../assets/textures/gman.png");
-        let texture_id_gman = scene.add_texture(
-            texture::Texture::from_bytes(
-                &gpu.device,
-                &gpu.queue,
-                texture_bytes_gman,
-                "Gman Texture",
-            )
-            .unwrap(),
-        );
-        let cube1 = scene.add_object(Mesh::new_manually(
-            verts.clone(),
-            inds.clone(),
-            Surface::Textured(texture_id_gman as u32),
-            true,
-        ));
-        let texture_bytes_doctor = include_bytes!("../assets/textures/doctor.png");
-        let texture_id_doctor = scene.add_texture(
-            texture::Texture::from_bytes(
-                &gpu.device,
-                &gpu.queue,
-                texture_bytes_doctor,
-                "Doctor Texture",
-            )
-            .unwrap(),
-        );
-        let cube2 = scene.add_object(Mesh::new_manually(
-            verts.clone(),
-            inds.clone(),
-            Surface::Textured(texture_id_doctor as u32),
-            true,
-        ));
-        let cube3 = scene.add_object(Mesh::new_manually(
-            verts.clone(),
-            inds.clone(),
-            Surface::Colored,
-            true,
-        ));
-        if let Some(mesh) = scene.get_object(cube2) {
-            mesh.set_position(glam::vec3(5.0, 1.0, 2.0));
-        }
-        if let Some(mesh) = scene.get_object(cube3) {
-            mesh.set_position(glam::vec3(-5.0, 0.0, -2.0));
-        }
-        let mut rng = rand::rng();
-
-        for _ in 0..1000 {
-            let x: f32 = rng.random_range(-50.0..50.0);
-            let y: f32 = rng.random_range(-50.0..50.0);
-            let z: f32 = rng.random_range(-50.0..50.0);
-
-            let cube_id = scene.add_object(Mesh::new_manually(
-                verts.clone(),
-                inds.clone(),
-                Surface::Textured(if rng.random_bool(0.5) {
-                    texture_id_doctor as u32
-                } else {
-                    texture_id_gman as u32
-                }),
-                true,
+        let dog =
+            scene.load_model_from_obj(&gpu, "assets/models/dog/13463_Australian_Cattle_Dog_v3.obj");
+        if let Some(mesh) = scene.get_object(dog) {
+            mesh.rotate(glam::Quat::from_axis_angle(
+                glam::Vec3 {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                -PI / 2.0,
             ));
-
-            if let Some(mesh) = scene.get_object(cube_id) {
-                mesh.set_scale(rng.random_range(0.5..3.0));
-            }
-            if let Some(mesh) = scene.get_object(cube_id) {
-                mesh.set_rotation(
-                    glam::Quat::from_axis_angle(
-                        glam::vec3(
-                            rng.random_range(-1.0..1.0),
-                            rng.random_range(-1.0..1.0),
-                            rng.random_range(-1.0..1.0),
-                        ),
-                        rng.random_range(0.0..6.28),
-                    )
-                    .normalize(),
-                );
-            }
-            if let Some(mesh) = scene.get_object(cube_id) {
-                mesh.set_position(glam::vec3(x, y, z));
-            }
         }
-        scene.remove_object(cube1);
         scene.build_models_buffers(&gpu);
 
         let depth_texture =
@@ -178,9 +59,7 @@ impl State {
             render,
             depth_texture,
             scene,
-            cube1,
-            cube2,
-            cube3,
+            dog,
             window,
         })
     }
@@ -215,14 +94,15 @@ impl State {
     }
 
     fn update(&mut self) {
-        if let Some(mesh) = self.scene.get_object(self.cube2) {
+        if let Some(mesh) = self.scene.get_object(self.dog) {
             mesh.rotate(glam::Quat::from_axis_angle(
-                glam::Vec3::new(1.0, 0.5, 0.5),
-                0.01,
+                glam::Vec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 1.0,
+                },
+                PI * 0.004,
             ));
-        }
-        if let Some(mesh) = self.scene.get_object(self.cube3) {
-            mesh.vertices[0].color[1] += 0.001;
         }
         self.scene.build_transform_buffers(&self.gpu);
         self.scene.update_camera(&self.gpu);

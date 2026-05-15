@@ -3,6 +3,7 @@ use crate::gpu::Gpu;
 use crate::mesh::{Mesh, Surface, Vertex};
 use crate::texture;
 use std::collections::HashMap;
+use std::path::Path;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -251,6 +252,103 @@ impl Scene {
         self.textures[id] = Some(texture);
     }
 
+    pub fn load_model_from_obj(&mut self, gpu: &Gpu, path: &str) -> usize {
+        let load_options = tobj::LoadOptions {
+            triangulate: true,
+            single_index: true,
+            ..Default::default()
+        };
+
+        let (models, materials) = tobj::load_obj(path, &load_options).unwrap();
+        if let Some(model) = models.get(0) {
+            let raw_mesh = &model.mesh;
+            let mut verts = Vec::<Vertex>::with_capacity(raw_mesh.positions.len() / 3);
+            for i in 0..(raw_mesh.positions.len() / 3) {
+                let position = [
+                    raw_mesh.positions[i * 3],
+                    raw_mesh.positions[i * 3 + 1],
+                    raw_mesh.positions[i * 3 + 2],
+                ];
+                let color = if !raw_mesh.vertex_color.is_empty() {
+                    [
+                        raw_mesh.vertex_color[i * 3],
+                        raw_mesh.vertex_color[i * 3 + 1],
+                        raw_mesh.vertex_color[i * 3 + 2],
+                    ]
+                } else {
+                    [1.0, 1.0, 1.0]
+                };
+
+                let tex_coords = if !raw_mesh.texcoords.is_empty() {
+                    [
+                        raw_mesh.texcoords[i * 2],
+                        1.0 - raw_mesh.texcoords[i * 2 + 1],
+                    ]
+                } else {
+                    [0.0, 0.0]
+                };
+
+                verts.push(Vertex {
+                    position,
+                    color,
+                    tex_coords,
+                });
+            }
+            let mesh: Mesh;
+            let materials = materials.unwrap();
+            if let Some(mat_id) = raw_mesh.material_id {
+                let mat = &materials[mat_id];
+                if let Some(ref diffuse_texture_name) = mat.diffuse_texture {
+                    let obj_path = Path::new(path);
+                    let folder = obj_path.parent().unwrap();
+                    let texture_path = folder.join(diffuse_texture_name);
+                    if let Ok(image) = image::open(texture_path) {
+                        let texture = texture::Texture::from_image(
+                            &gpu.device,
+                            &gpu.queue,
+                            &image,
+                            Some(format!("Texture For {}", path).as_str()),
+                        )
+                        .unwrap();
+                        let texture_id = self.add_texture(texture);
+                        mesh = Mesh::new_manually(
+                            verts,
+                            raw_mesh.indices.clone(),
+                            Surface::Textured(texture_id as u32),
+                            true,
+                        );
+                        self.add_object(mesh)
+                    } else {
+                        log::warn!("Не найдена текстура для модели {}", path);
+                        mesh = Mesh::new_manually(
+                            verts,
+                            raw_mesh.indices.clone(),
+                            Surface::Textured(0),
+                            true,
+                        );
+                        self.add_object(mesh)
+                    }
+                } else {
+                    log::warn!("Не найдена текстура для модели {}", path);
+                    mesh = Mesh::new_manually(
+                        verts,
+                        raw_mesh.indices.clone(),
+                        Surface::Textured(0),
+                        true,
+                    );
+                    self.add_object(mesh)
+                }
+            } else {
+                log::warn!("Не найдена текстура для модели {}", path);
+                mesh =
+                    Mesh::new_manually(verts, raw_mesh.indices.clone(), Surface::Textured(0), true);
+                self.add_object(mesh)
+            }
+        } else {
+            panic!("Unable to load model from {}", path);
+        }
+    }
+
     pub fn set_object_visibilty(&mut self, id: usize, visible: bool) {
         if id >= self.meshes.len() {
             return;
@@ -290,6 +388,9 @@ impl Scene {
             } else {
                 log::warn!("Lost model");
             }
+        }
+        if trans.len() == 0 {
+            trans.push(InstanceData::new());
         }
         self.transform_buffer = gpu
             .device
@@ -443,7 +544,8 @@ impl Scene {
         self.models_colored_drawing
             .iter_mut()
             .for_each(|x| x.index_transform += offset);
-        let trans: Vec<InstanceData> = trans_textured.into_iter().chain(trans_colored).collect();
+        let mut trans: Vec<InstanceData> =
+            trans_textured.into_iter().chain(trans_colored).collect();
 
         self.vertex_textured_buffer = match verts_textured.is_empty() {
             true => None,
@@ -507,6 +609,10 @@ impl Scene {
                     }),
             ),
         };
+
+        if trans.len() == 0 {
+            trans.push(InstanceData::new());
+        }
 
         self.transform_buffer = gpu
             .device
