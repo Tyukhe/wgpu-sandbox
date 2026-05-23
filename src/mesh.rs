@@ -2,6 +2,7 @@
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
+    pub normal: [f32; 3],
     pub color: [f32; 3],
     pub tex_coords: [f32; 2],
 }
@@ -25,6 +26,11 @@ impl Vertex {
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 6]>() as wgpu::BufferAddress,
                     shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 9]>() as wgpu::BufferAddress,
+                    shader_location: 3,
                     format: wgpu::VertexFormat::Float32x2,
                 },
             ],
@@ -41,19 +47,14 @@ pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub surface: Surface,
-    pub position: glam::Vec3,
-    pub rotation: glam::Quat,
-    pub scale: f32,
+    position: glam::Vec3,
+    rotation: glam::Quat,
+    scale: f32,
     pub visible: bool,
 }
 
 impl Mesh {
-    pub fn new_manually(
-        verts: Vec<Vertex>,
-        inds: Vec<u32>,
-        surface: Surface,
-        visible: bool,
-    ) -> Self {
+    pub fn new(verts: Vec<Vertex>, inds: Vec<u32>, surface: Surface, visible: bool) -> Self {
         Self {
             vertices: verts,
             indices: inds,

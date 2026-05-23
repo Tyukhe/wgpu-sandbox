@@ -1,8 +1,7 @@
 use crate::camera::Camera;
 use crate::gpu::Gpu;
-use crate::mesh::{Mesh, Surface, Vertex};
 use crate::render::Render;
-use crate::scene::Scene;
+use crate::scene::{Light, Scene};
 use crate::texture;
 use std::f32::consts::PI;
 use std::sync::Arc;
@@ -41,6 +40,16 @@ impl State {
                 -PI / 2.0,
             ));
         }
+
+        scene.add_light_on_id(
+            Light {
+                position: glam::vec4(15.0, 15.0, 10.0, 0.0),
+                color: glam::vec4(1.0, 1.0, 1.0, 1.0),
+            },
+            0,
+        );
+
+        scene.build_lights_buffers(&gpu);
         scene.build_models_buffers(&gpu);
 
         let depth_texture =
@@ -50,6 +59,7 @@ impl State {
             &gpu,
             &scene.camera_bind_group_layout,
             &scene.transform_bind_group_layout,
+            &scene.lights_bind_group_layout,
             &scene.textures_bind_group_layout,
         ))
         .unwrap();
@@ -101,7 +111,7 @@ impl State {
                     y: 0.0,
                     z: 1.0,
                 },
-                PI * 0.004,
+                PI * 0.001,
             ));
         }
         self.scene.build_transform_buffers(&self.gpu);
@@ -134,9 +144,9 @@ impl State {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.1,
+                            r: 0.04,
+                            g: 0.04,
+                            b: 0.04,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -158,12 +168,13 @@ impl State {
 
             render_pass.set_bind_group(0, &self.scene.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.scene.transform_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.scene.lights_bind_group, &[]);
             if let (Some(v_buf_tex), Some(i_buf_tex)) = (
                 &self.scene.vertex_textured_buffer,
                 &self.scene.index_textured_buffer,
             ) {
                 render_pass.set_pipeline(&self.render.render_pipeline_textured);
-                render_pass.set_bind_group(2, &self.scene.textures_bind_group, &[]);
+                render_pass.set_bind_group(3, &self.scene.textures_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, v_buf_tex.slice(..));
                 render_pass.set_index_buffer(i_buf_tex.slice(..), wgpu::IndexFormat::Uint32);
                 for model in &self.scene.models_textured_drawing {

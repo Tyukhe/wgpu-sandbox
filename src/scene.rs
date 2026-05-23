@@ -33,6 +33,24 @@ impl InstanceData {
     }
 }
 
+const LIGHTS_COUNT_MAX: usize = 16;
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, Default)]
+pub struct Light {
+    pub position: glam::Vec4,
+    pub color: glam::Vec4,
+}
+
+impl Light {
+    pub fn new() -> Self {
+        Self {
+            position: glam::Vec4::ZERO,
+            color: glam::Vec4::ZERO,
+        }
+    }
+}
+
 pub struct ModelInfo {
     mesh_index: usize,
     texture_index: u32,
@@ -46,6 +64,10 @@ pub struct Scene {
     textures: Vec<Option<texture::Texture>>,
     pub models_colored_drawing: Vec<ModelInfo>,
     pub models_textured_drawing: Vec<ModelInfo>,
+    lights: [Light; LIGHTS_COUNT_MAX],
+    lights_buffer: wgpu::Buffer,
+    pub lights_bind_group_layout: wgpu::BindGroupLayout,
+    pub lights_bind_group: wgpu::BindGroup,
     default_texture: texture::Texture,
     pub camera: Camera,
     pub camera_controller: CameraController,
@@ -66,7 +88,7 @@ pub struct Scene {
 
 impl Scene {
     pub fn new(gpu: &Gpu, camera: Camera) -> Self {
-        let camera_controller = CameraController::new(0.08, 0.01);
+        let camera_controller = CameraController::new(0.16, 0.01);
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera);
         let camera_buffer = gpu
@@ -149,7 +171,16 @@ impl Scene {
         )
         .unwrap();
         let views: Vec<&wgpu::TextureView> = vec![&default_texture.view; 1024];
-        let textures = Vec::<Option<texture::Texture>>::with_capacity(1024);
+        let mut textures = Vec::<Option<texture::Texture>>::with_capacity(1024);
+        textures.push(Some(
+            texture::Texture::from_bytes(
+                &gpu.device,
+                &gpu.queue,
+                default_texture_bytes,
+                "Default Texture",
+            )
+            .unwrap(),
+        ));
 
         let textures_bind_group_layout =
             gpu.device
@@ -190,11 +221,50 @@ impl Scene {
             label: Some("Diffuse Bind Group"),
         });
 
+        let lights = [Light::new(); LIGHTS_COUNT_MAX];
+
+        let lights_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Lights Buffer"),
+                contents: bytemuck::cast_slice(&lights),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let lights_bind_group_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                    label: Some("Lights Bind Group Layout"),
+                });
+
+        let lights_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &lights_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lights_buffer.as_entire_binding(),
+            }],
+            label: Some("Lights Bind Group"),
+        });
+
         Self {
             meshes: Vec::<Option<Mesh>>::new(),
             textures,
             models_colored_drawing,
             models_textured_drawing,
+            lights,
+            lights_buffer,
+            lights_bind_group_layout,
+            lights_bind_group,
             default_texture,
             camera,
             camera_controller,
@@ -222,6 +292,46 @@ impl Scene {
     pub fn add_texture(&mut self, texture: texture::Texture) -> usize {
         self.textures.push(Some(texture));
         self.textures.len() - 1
+    }
+
+    pub fn add_light_on_id(&mut self, light: Light, id: usize) {
+        if id > (LIGHTS_COUNT_MAX - 1) {
+            panic!(
+                "Источники света могут имет индексы только до 16. Передано: {}",
+                id
+            );
+        }
+        self.lights[id] = light;
+    }
+
+    pub fn remove_light_on_id(&mut self, id: usize) {
+        if id > (LIGHTS_COUNT_MAX - 1) {
+            panic!(
+                "Источники света могут имет индексы только до 16. Передано: {}",
+                id
+            );
+        }
+        self.lights[id].color.w = 0.0;
+    }
+
+    pub fn set_light_color_on_id(&mut self, color: glam::Vec4, id: usize) {
+        if id > (LIGHTS_COUNT_MAX - 1) {
+            panic!(
+                "Источники света могут имет индексы только до 16. Передано: {}",
+                id
+            );
+        }
+        self.lights[id].color = color;
+    }
+
+    pub fn set_light_position_on_id(&mut self, position: glam::Vec4, id: usize) {
+        if id > (LIGHTS_COUNT_MAX - 1) {
+            panic!(
+                "Источники света могут имет индексы только до 16. Передано: {}",
+                id
+            );
+        }
+        self.lights[id].position = position;
     }
 
     pub fn remove_object(&mut self, id: usize) {
@@ -269,6 +379,7 @@ impl Scene {
                     raw_mesh.positions[i * 3 + 1],
                     raw_mesh.positions[i * 3 + 2],
                 ];
+
                 let color = if !raw_mesh.vertex_color.is_empty() {
                     [
                         raw_mesh.vertex_color[i * 3],
@@ -288,8 +399,19 @@ impl Scene {
                     [0.0, 0.0]
                 };
 
+                let normal = if !raw_mesh.normals.is_empty() {
+                    [
+                        raw_mesh.normals[i * 3],
+                        raw_mesh.normals[i * 3 + 1],
+                        raw_mesh.normals[i * 3 + 2],
+                    ]
+                } else {
+                    [0.0, 1.0, 0.0]
+                };
+
                 verts.push(Vertex {
                     position,
+                    normal,
                     color,
                     tex_coords,
                 });
@@ -311,7 +433,7 @@ impl Scene {
                         )
                         .unwrap();
                         let texture_id = self.add_texture(texture);
-                        mesh = Mesh::new_manually(
+                        mesh = Mesh::new(
                             verts,
                             raw_mesh.indices.clone(),
                             Surface::Textured(texture_id as u32),
@@ -320,28 +442,18 @@ impl Scene {
                         self.add_object(mesh)
                     } else {
                         log::warn!("Не найдена текстура для модели {}", path);
-                        mesh = Mesh::new_manually(
-                            verts,
-                            raw_mesh.indices.clone(),
-                            Surface::Textured(0),
-                            true,
-                        );
+                        mesh =
+                            Mesh::new(verts, raw_mesh.indices.clone(), Surface::Textured(0), true);
                         self.add_object(mesh)
                     }
                 } else {
                     log::warn!("Не найдена текстура для модели {}", path);
-                    mesh = Mesh::new_manually(
-                        verts,
-                        raw_mesh.indices.clone(),
-                        Surface::Textured(0),
-                        true,
-                    );
+                    mesh = Mesh::new(verts, raw_mesh.indices.clone(), Surface::Textured(0), true);
                     self.add_object(mesh)
                 }
             } else {
                 log::warn!("Не найдена текстура для модели {}", path);
-                mesh =
-                    Mesh::new_manually(verts, raw_mesh.indices.clone(), Surface::Textured(0), true);
+                mesh = Mesh::new(verts, raw_mesh.indices.clone(), Surface::Textured(0), true);
                 self.add_object(mesh)
             }
         } else {
@@ -407,6 +519,25 @@ impl Scene {
                 resource: self.transform_buffer.as_entire_binding(),
             }],
             label: Some("Transform Bind Group"),
+        });
+    }
+
+    pub fn build_lights_buffers(&mut self, gpu: &Gpu) {
+        self.lights_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Lights Buffer"),
+                contents: bytemuck::cast_slice(&self.lights),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+
+        self.lights_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.lights_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.lights_buffer.as_entire_binding(),
+            }],
+            label: Some("Lights Bind Group"),
         });
     }
 

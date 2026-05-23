@@ -12,6 +12,7 @@ impl Render {
         gpu: &Gpu,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         transform_bind_group_layout: &wgpu::BindGroupLayout,
+        lights_bind_group_layout: &wgpu::BindGroupLayout,
         texture_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> anyhow::Result<Self> {
         let shader_colored = gpu
@@ -25,7 +26,11 @@ impl Render {
             gpu.device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Render Pipeline Colored Layout"),
-                    bind_group_layouts: &[camera_bind_group_layout, transform_bind_group_layout],
+                    bind_group_layouts: &[
+                        camera_bind_group_layout,
+                        transform_bind_group_layout,
+                        lights_bind_group_layout,
+                    ],
                     immediate_size: 0,
                 });
 
@@ -89,6 +94,7 @@ impl Render {
                     bind_group_layouts: &[
                         camera_bind_group_layout,
                         transform_bind_group_layout,
+                        lights_bind_group_layout,
                         texture_bind_group_layout,
                     ],
                     immediate_size: 0,
